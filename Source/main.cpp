@@ -299,7 +299,7 @@ void print()
 
 int _tmain(int argc, _TCHAR* argv[])
 {
-  if(!rfile("g:\\WORK\\_QT\\_FREELANCE\\Planirovanie\\Lab1_14\\input.txt")) return 0;
+  if(!rfile("input.txt")) return 0;
 
   //Создаем потоки
   for(int i=0;i<vecDetails.size();i++)
@@ -336,6 +336,7 @@ int _tmain(int argc, _TCHAR* argv[])
       print();
 
   }
+  _getch();
 }
 
 
