@@ -1,6 +1,6 @@
 4 5
-lcfs
-10 2 4
+rr
+2 1 4
 stanok1
 3
 stanok2
