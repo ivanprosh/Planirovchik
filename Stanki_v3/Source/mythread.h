@@ -17,5 +17,17 @@ public:
         if(func) func(id);
     }
 };
-
+/*
+class PrintThread : public QThread
+{
+    //void (*func)(int i);
+public:
+    //int id;
+    PrintThread(){}
+    void run(){
+        //запуск функции, привязанной к потоку
+        if(func) func(id);
+    }
+};
+*/
 #endif // MYTHREAD_H

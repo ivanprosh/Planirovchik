@@ -17,6 +17,7 @@
 #include <QSettings>
 #include <QDebug>
 #include <QCoreApplication>
+#include <QSemaphore>
 #include "mythread.h"
 
 using namespace std;
@@ -46,7 +47,7 @@ class TDetail
 {
 public:
     int id; //Идентификатор детали
-    int count;//кол-во
+    //int count;//кол-во
     int state; //текущее состояние детали (free - 0, busy - 1, finish - 2)
     int curtime;//текущее время для обработки
     int worktime;//общее время для обработки
@@ -55,7 +56,7 @@ public:
     int MachCount;
     int stanok_i[10]; // Индексы машин, которые нужны для производства детали
     int cur_mach; //текущий индекс станка для обработки
-    TDetail(int curid,int curcount,int curpri,int curworktime):id(curid),count(curcount),pri(curpri),worktime(curworktime),curtime(curworktime),cur_mach(0),state(0){
+    TDetail(int curid,int curpri,int curworktime):id(curid),pri(curpri),worktime(curworktime),curtime(curworktime),cur_mach(0),state(0){
         for(int i=0;i<10;i++)
             stanok_i[i]=0;
     }
@@ -70,7 +71,7 @@ QVector <TDetail*> vecDetails;
 // Отсортированная очередь
 QVector <TDetail*> sortVecDetails;
 
-HANDLE semaphore[30], semaphore_sync;
+QSemaphore semaphore_sync;
 
 //Глобальные настроечные параметры
 int NR(0),NP(0),MaxP(4),MaxT(5),QT(0),kvant(0);
@@ -82,6 +83,7 @@ int count = 0;
 int curThreadCount = 0;
 //для блокировки одновременного доступа к крит. секции
 QMutex PetriJump;
+int countThreadOnCycle = 0;
 //указатель на ключевую функцию для потоков
 void (*algorithm)(int i);
 
@@ -101,8 +103,8 @@ private:
 */
 
 //предикат для сортировки по убыванию
-bool lessCPU_BurstThen(const TDetail* det1,const TDetail* det2){
-    return det1->worktime < det2->worktime;
+bool moreCPU_BurstThen(const TDetail* det1,const TDetail* det2){
+    return det1->worktime > det2->worktime;
 }
 
 char Ch(int s) { return s+'a'; }
@@ -175,15 +177,7 @@ bool process_det(TDetail* curDet, TMachine* curMachine, int time)
             break;
         }
     }
-    /*
-    QVector<TDetail*>::const_iterator it;
-    it=find_if(curMachine->Details.begin(),curMachine->Details.end(),cmp_detail(curDet));
-    if(it!=curMachine->Details.end()) {
-        curMachine->Details.erase(it);
-    } else {
-        throw Error("Cannot find details in query, det id:" + curDet->id);
-    }
-    */
+
     curMachine->readyNextCycle = 1;
     return 1;
 }
@@ -191,6 +185,7 @@ void work(int i, int time)
 {
     //индекс станка для текущей детали
     int index_machine = (vecDetails.at(i)->stanok_i[vecDetails.at(i)->cur_mach]) - 1;
+    Q_ASSERT(index_machine<vecMachines.size() && index_machine>=0);
 
     if(vecMachines.at(index_machine)->ready && (vecDetails.at(i)->state==0)){
         vecMachines.at(index_machine)->Details.push_back(vecDetails[i]);
@@ -200,11 +195,12 @@ void work(int i, int time)
     }
 
     if(vecDetails[i]->state == 1){
-        if(process_det(vecDetails[i],vecMachines.at(index_machine),time))
+        if(process_det(vecDetails[i],vecMachines[index_machine],time))
         {
             if(vecDetails[i]->cur_mach<(vecDetails.at(i)->MachCount-1))
             {
                 vecDetails[i]->cur_mach++;
+                int mach = vecDetails[i]->cur_mach;
                 vecDetails[i]->curtime = vecDetails.at(i)->worktime;
                 vecDetails[i]->state = 0;
             }
@@ -222,24 +218,27 @@ void work(int i, int time)
 
 void SJF_n(int i)
 {
-    while(::count>0)//пока есть детали
+    while(::count>0 && (vecDetails.at(i)->state != 2))//пока есть детали
     {
         //синхронизация в начале кванта
         syncmutex.lock();
+        semaphore_sync.acquire();
         synchronize.wait(&syncmutex);
         curThreadCount++;
+        countThreadOnCycle++;
+        semaphore_sync.release();
         syncmutex.unlock();
 
         //пока не подойдет очередь согласно SJF для данного потока - ждем
-        while(!sortVecDetails.empty() && sortVecDetails.first()->id!=i);
+        int first = sortVecDetails.front()->id;
+        int second = sortVecDetails.back()->id;
+        while(sortVecDetails.back()->id!=i);
 
         if(!sortVecDetails.empty()){
-            int size = sortVecDetails.size();
             // блокировка сетью Петри (взять фишку)
             move_petry(1);
             //извлекаем детали в порядке очереди
-            Q_ASSERT(!sortVecDetails.empty());
-            sortVecDetails.pop_front();
+            sortVecDetails.pop_back();
             // Основной алгоритм обработки детали
             work(i,MaxT);
             //отдать фишку
@@ -247,18 +246,19 @@ void SJF_n(int i)
             //Имитируем длительность кванта
             if(vecDetails.at(i)->state != 2) QThread::currentThread()->msleep(MaxT);
 
+//            if(vecDetails.at(i)->state != 2) {
+//                sortVecDetails.push_back(vecDetails.at(i)); //вернем поток в очередь
+//            }
+
             //считаем, что работа потока завершена на данном кванте, уменьшаем количество запущенных потоков
             syncmutex.lock();
             curThreadCount--;
             syncmutex.unlock();
+            //отдаем проц.время другим потокам
+            //QThread::currentThread()->sleep(0);
 
-            if(vecDetails.at(i)->state != 2) {
-                //отдаем проц.время другим потокам
-                QThread::currentThread()->sleep(0);
-                sortVecDetails.push_back(vecDetails[i]); //вернем поток в очередь
-            }
         } else {
-            throw Error("Empty query of sort details in thread id is " + QString::number(i));
+            ;//throw Error("Empty query of sort details in thread id is " + QString::number(i));
         }
     }
 
@@ -297,7 +297,7 @@ void SJF_p(int i)
         //ReleaseSemaphore(semaphore_sync,1,NULL);
 
         //освобождаем следующий поток на исполнение
-        if(!sortVecDetails.empty()) ReleaseSemaphore(semaphore[sortVecDetails[sortVecDetails.size()-1]->id], 1, NULL);
+        //if(!sortVecDetails.empty()) ReleaseSemaphore(semaphore[sortVecDetails[sortVecDetails.size()-1]->id], 1, NULL);
     }
 }
 //Чтение из файла
@@ -330,17 +330,17 @@ void rfile(const string& name)
     for(int i=1;i<=NP;i++){
         int it(0);
         settings.beginGroup("Process_"+QString::number(i));
-        vecDetails.push_back(new TDetail(i-1,settings.value("count").toInt(),settings.value("pri").toInt(),settings.value("worktime").toInt()));
+        vecDetails.push_back(new TDetail(i-1,settings.value("pri").toInt(),settings.value("worktime").toInt()));
         QStringList query = settings.value("query").toString().split(" ",QString::SkipEmptyParts);
         //QString query = settings.value("query").toString();
         qDebug() << query;
         while(!query.isEmpty()){
-            vecDetails.last()->stanok_i[it]=query.takeFirst().toInt();
+            vecDetails.back()->stanok_i[it]=query.takeFirst().toInt();
             it++;
         }
-        vecDetails.last()->MachCount = it+1;
+        vecDetails.back()->MachCount = it;
         //прибавляем к общему количеству деталей
-        ::count+=vecDetails.last()->count;
+        ::count++;
         settings.endGroup();
     }
     if(PA=="SJF_n") algorithm=&SJF_n;
@@ -352,8 +352,8 @@ void rfile(const string& name)
         qDebug() << "Index mach: " << curmach->id  << " det: " << curmach->count_det;
     }
     foreach (TDetail* curdet, vecDetails) {
-        qDebug() << "Index det: " << curdet->id  << " count det: " << curdet->count << " worktime:" << curdet->worktime << "pri:" << curdet->pri
-                 << "query: " << QString::number(curdet->stanok_i[0]) << QString::number(curdet->stanok_i[1]) << QString::number(curdet->stanok_i[2])
+        qDebug() << "Index det: " << curdet->id  << " worktime:" << curdet->worktime << "pri:" << curdet->pri
+                 << "MachCount: " << curdet->MachCount  << "query: " << QString::number(curdet->stanok_i[0]) << QString::number(curdet->stanok_i[1]) << QString::number(curdet->stanok_i[2])
                               << QString::number(curdet->stanok_i[3]) << QString::number(curdet->stanok_i[4]);
     }
     qDebug() << "*******************Finish read input file********************************";
@@ -407,23 +407,22 @@ int main(int argc, _TCHAR* argv[])
         }
 
   //Семафор для синхронизации
-  //semaphore_sync = CreateSemaphore( NULL, 0, vecThreads.size(), NULL );
-  sortVecDetails = vecDetails; //вектор для очереди деталей
+  semaphore_sync.release(vecDetails.size());
+
+  bool firstStart = true;
 
   while (::count>0)
   {
-      /*
-      if(algorithm == rr) {
-          sortVecDetails = vecDetails;
+      countThreadOnCycle = 0;
+
+      for(int i=0;i<vecDetails.size();i++){
+        if(vecDetails.at(i)->state!=2) sortVecDetails.push_back(vecDetails.at(i)); //вектор для очереди деталей
       }
-      std::sort( sortVecDetails.begin(), sortVecDetails.end(), cmp_det_pri );
-      */
+      int sizeDet = sortVecDetails.size();
 
-      //сортируем по возрастанию длительности CPU_burst
-      qSort( sortVecDetails.begin(), sortVecDetails.end(),lessCPU_BurstThen);
-      qDebug() << "After sorting: ";
-      qDebug() << sortVecDetails.first()->worktime << " " << sortVecDetails.last()->worktime;
-
+      //сортируем по убыванию длительности CPU_burst
+      qSort( sortVecDetails.begin(), sortVecDetails.end(),moreCPU_BurstThen);
+      //qDebug() << sortVecDetails.front()->id << sortVecDetails.last()->id;
       //проверяем готовность станков
       for(int i=0;i<vecMachines.size();i++)
       {
@@ -432,25 +431,25 @@ int main(int argc, _TCHAR* argv[])
       }
 
       //будим потоки
+      while(semaphore_sync.available()>(vecDetails.size()-sizeDet));
       synchronize.wakeAll();
 
-      //освобождаем семафор для самого приоритетного потока
-      //ReleaseSemaphore(semaphore[sortVecDetails[sortVecDetails.size()-1]->id], 1, NULL);
-      //ждем пока вся карусель не пройдет круг (RR) или пока поток не завершится(LCFS)
-      //for (int i = 0; i < vecThreads.size(); i++) WaitForSingleObject(semaphore_sync, INFINITE );
-
+      //пока количество потоков не стало максимальным
+      while(countThreadOnCycle!=sizeDet);
       //пока потоки не завершились все
       while(curThreadCount>0);
       //вывод на экран
       print();
+      //firststart = false;
 
   }
+  qDebug() << "Finish!";
   _getch();
 
   }
-    catch(Error err){
-        qDebug() << "Error: "<< err.descr;
-    }
+  catch(Error err){
+      qDebug() << "Error: "<< err.descr;
+  }
   return app.exec();
 }
 
