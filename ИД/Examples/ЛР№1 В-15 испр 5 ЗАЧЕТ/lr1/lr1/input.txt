@@ -1,0 +1,25 @@
+sjfnonpreemptive
+3 8 1
+ivanov math 3
+petrov rusyaz 2
+lebedev fiz 2
+
+vasiliev 3 10 3
+math fiz rusyaz
+karev 3 8 2
+math fiz rusyaz
+lavrentiev 2 7 2
+math fiz 
+vasiliev 1 2 2
+rusyaz
+avdeev 2 9 1
+rusyaz fiz
+andreev 2 2 1
+fiz rusyaz
+golubev 1 4 0
+fiz 
+zimin 3 6 3
+rusyaz math fiz
+
+
+

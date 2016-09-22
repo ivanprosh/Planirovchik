@@ -1,0 +1,36 @@
+static Semaphore s = new Semaphore(0, 4);
+static Semaphore[] t = new Semaphore[4];
+static Random r = new Random();
+static int Tick = 0;
+
+static void ThreadMethod(object obj)
+{
+	int id = (int)obj;
+	do
+	{
+		int time = r.Next(100, 1000);
+		t[id - 1].WaitOne();
+		Console.WriteLine("[Квант {0}] Поток {1} работает {2} мс", Tick, id, time);
+		Thread.Sleep(time);
+		s.Release();
+	} while (Tick < 5);
+}
+
+static void Main(string[] args)
+{
+	Thread[] th = new Thread[4];
+	for (int i = 0; i < 4; i++)
+	{
+		th[i] = new Thread(ThreadMethod);
+		t[i] = new Semaphore(0, 1);
+		th[i].Start(i + 1);
+	}
+	for (Tick = 1; Tick <= 5; Tick++)
+	{
+		Console.WriteLine("Начало кванта {0}", Tick);
+		for (int i = 0; i < 4; i++) t[i].Release();
+		for (int i = 0; i < 4; i++) s.WaitOne();
+		Console.WriteLine("Конец кванта {0}", Tick);
+	}
+}
+Здесь 4 потока работают в течение 5 квантов времени. Продолжительность квантов отличается (генерируется ДСЧ), но диспетчер синхронизирует начало кванта с помощью массива семафоров t (хотя, можно обойтись и одним семафором) и конец кванта с помощью семафора s. Хотя, есть и другие варианты.

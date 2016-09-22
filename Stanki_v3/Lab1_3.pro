@@ -1,21 +1,16 @@
 QT += core
+QT -= gui
 
-CONFIG += c++11
-
-TARGET = Lab1_14
+TARGET = Lab1_3
 CONFIG += console
 CONFIG -= app_bundle
 
 TEMPLATE = app
 
 SOURCES += \
-    Source/main.cpp \
-    Source/stdafx.cpp
+    Source/main.cpp
 
 HEADERS += \
-    Source/stdafx.h \
-    Source/targetver.h \
-    mythread.h \
     Source/mythread.h
 
 deployment.path = $$OUT_PWD/
